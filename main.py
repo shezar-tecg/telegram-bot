@@ -9,7 +9,7 @@ from telebot import types
 # =========================
 
 N8N_WEBHOOK_URL = (
-    "https://shezar.app.n8n.cloud/webhook/c10a4de5-5562-40d8-83fb-2dad504493ba"
+    "https://shehzar123.app.n8n.cloud/webhook/a8e1cfbd-9302-4604-98ef-39770f078e60"
 )
 
 API_TOKEN = os.getenv("API_TOKEN")
