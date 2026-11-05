@@ -1,3 +1,4 @@
+
 import os
 import sqlite3
 import telebot
@@ -31,22 +32,27 @@ DB_FILE = os.path.join(VOLUME_PATH, "user.db")
 # =========================
 
 def setup_database():
-    with sqlite3.connect(DB_FILE) as connection:
-        connection.execute("""
-            CREATE TABLE IF NOT EXISTS user (
-                chat_id TEXT,
-                memory_key TEXT,
-                memory_value TEXT,
-                PRIMARY KEY (chat_id, memory_key)
-            )
-        """)
+    connection = sqlite3.connect(DB_FILE)
+    cursor = connection.cursor()
 
-        connection.execute("""
-            CREATE TABLE IF NOT EXISTS bot_state (
-                chat_id TEXT PRIMARY KEY,
-                current_state TEXT
-            )
-        """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user (
+            chat_id TEXT,
+            memory_key TEXT,
+            memory_value TEXT,
+            PRIMARY KEY (chat_id, memory_key)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bot_state (
+            chat_id TEXT PRIMARY KEY,
+            current_state TEXT
+        )
+    """)
+
+    connection.commit()
+    connection.close()
 
 
 def normalize_key(key):
@@ -54,35 +60,58 @@ def normalize_key(key):
 
 
 def get_user_state(chat_id):
-    with sqlite3.connect(DB_FILE) as connection:
-        row = connection.execute(
-            "SELECT current_state FROM bot_state WHERE chat_id = ?",
-            (str(chat_id),)
-        ).fetchone()
+    connection = sqlite3.connect(DB_FILE)
+    cursor = connection.cursor()
 
-    return row[0] if row else "Menu"
+    cursor.execute(
+        "SELECT current_state FROM bot_state WHERE chat_id = ?",
+        (str(chat_id),)
+    )
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row:
+        return row[0]
+    else:
+        return "Menu"
 
 
 def update_user_state(chat_id, state):
-    with sqlite3.connect(DB_FILE) as connection:
-        connection.execute("""
-            INSERT OR REPLACE INTO bot_state
-            (chat_id, current_state)
-            VALUES (?, ?)
-        """, (str(chat_id), state))
+    connection = sqlite3.connect(DB_FILE)
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO bot_state
+        (chat_id, current_state)
+        VALUES (?, ?)
+    """, (str(chat_id), state))
+
+    connection.commit()
+    connection.close()
 
 
 def recall_fact(chat_id, key):
     key = normalize_key(key)
 
-    with sqlite3.connect(DB_FILE) as connection:
-        row = connection.execute("""
-            SELECT memory_value
-            FROM user
-            WHERE chat_id = ? AND memory_key = ?
-        """, (str(chat_id), key)).fetchone()
+    connection = sqlite3.connect(DB_FILE)
+    cursor = connection.cursor()
 
-    return row[0] if row else None
+    cursor.execute("""
+        SELECT memory_value
+        FROM user
+        WHERE chat_id = ? AND memory_key = ?
+    """, (str(chat_id), key))
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row:
+        return row[0]
+    else:
+        return None
 
 
 def remembered_fact(chat_id, key, value):
@@ -92,40 +121,62 @@ def remembered_fact(chat_id, key, value):
     if not key or key == "temp_key":
         raise ValueError("Please choose a valid memory key.")
 
-    with sqlite3.connect(DB_FILE) as connection:
-        connection.execute("""
-            INSERT OR REPLACE INTO user
-            (chat_id, memory_key, memory_value)
-            VALUES (?, ?, ?)
-        """, (str(chat_id), key, value))
+    connection = sqlite3.connect(DB_FILE)
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO user
+        (chat_id, memory_key, memory_value)
+        VALUES (?, ?, ?)
+    """, (str(chat_id), key, value))
+
+    connection.commit()
+    connection.close()
 
 
 def recall_all_fact(chat_id):
-    with sqlite3.connect(DB_FILE) as connection:
-        return connection.execute("""
-            SELECT memory_key, memory_value
-            FROM user
-            WHERE chat_id = ?
-            ORDER BY memory_key
-        """, (str(chat_id),)).fetchall()
+    connection = sqlite3.connect(DB_FILE)
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT memory_key, memory_value
+        FROM user
+        WHERE chat_id = ?
+        ORDER BY memory_key
+    """, (str(chat_id),))
+
+    rows = cursor.fetchall()
+
+    connection.close()
+
+    return rows
 
 
 def save_pending_keys(chat_id, keys):
-    # Save keys as ordinary comma-separated text.
-    with sqlite3.connect(DB_FILE) as connection:
-        connection.execute("""
-            INSERT OR REPLACE INTO user
-            (chat_id, memory_key, memory_value)
-            VALUES (?, 'temp_key', ?)
-        """, (str(chat_id), ",".join(keys)))
+    connection = sqlite3.connect(DB_FILE)
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO user
+        (chat_id, memory_key, memory_value)
+        VALUES (?, ?, ?)
+    """, (str(chat_id), "temp_key", ",".join(keys)))
+
+    connection.commit()
+    connection.close()
 
 
 def clear_pending_keys(chat_id):
-    with sqlite3.connect(DB_FILE) as connection:
-        connection.execute("""
-            DELETE FROM user
-            WHERE chat_id = ? AND memory_key = 'temp_key'
-        """, (str(chat_id),))
+    connection = sqlite3.connect(DB_FILE)
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        DELETE FROM user
+        WHERE chat_id = ? AND memory_key = ?
+    """, (str(chat_id), "temp_key"))
+
+    connection.commit()
+    connection.close()
 
 
 # Create the database tables.
@@ -160,109 +211,51 @@ def show_menu(chat_id, message_text):
 # N8N AI INTEGRATION
 # =========================
 
+
+
 def send_to_n8n(chat_id, user_message):
+
+    # Get all saved memories
+    memories = recall_all_fact(chat_id)
+
+    # Convert memories into readable text
+    memory_text = ""
+
+    for key, value in memories:
+        if key != "temp_key":
+            memory_text += key + ": " + value + "\n"
+
+    # Send the message and memories to n8n
+    data = {
+        "chat_id": chat_id,
+        "message": user_message,
+        "memory": memory_text
+    }
+
     try:
-        memories = [
-            (key, value)
-            for key, value in recall_all_fact(chat_id)
-            if key != "temp_key"
-        ]
-
-        memory_text = "\n".join(
-            f"{key}: {value}"
-            for key, value in memories
-        )
-
         response = requests.post(
             N8N_WEBHOOK_URL,
-            json={
-                "chat_id": chat_id,
-                "message": user_message,
-                "memory": memory_text
-            },
+            json=data,
             timeout=30
         )
 
         response.raise_for_status()
 
-        result = (
-            response.json()
-            if response.text.strip()
-            else {}
-        )
+        # Get the AI's reply
+        result = response.json()
+        reply = result["reply"]
 
-        reply = None
+        # Send the reply to the user
+        bot.send_message(chat_id, reply)
 
-        if isinstance(result, dict):
-            reply = (
-                result.get("reply")
-                or result.get("output")
-                or result.get("response")
-                or result.get("text")
-            )
-
-            if reply is None and isinstance(
-                result.get("data"), dict
-            ):
-                data = result["data"]
-
-                reply = (
-                    data.get("reply")
-                    or data.get("output")
-                    or data.get("response")
-                    or data.get("text")
-                )
-
-        elif isinstance(result, list) and result:
-            first = result[0]
-
-            if isinstance(first, dict):
-                reply = (
-                    first.get("reply")
-                    or first.get("output")
-                    or first.get("response")
-                    or first.get("text")
-                )
-
-            elif isinstance(first, str):
-                reply = first
-
-        elif isinstance(result, str):
-            reply = result
-
-        if not isinstance(reply, str) or not reply.strip():
-            bot.send_message(
-                chat_id,
-                "n8n received your message but returned no reply. "
-                "Please check your n8n workflow response."
-            )
-            return
-
-        reply = reply.strip()
-
-        # Send long replies in smaller messages.
-        for start in range(0, len(reply), 4000):
-            bot.send_message(
-                chat_id,
-                reply[start:start + 4000]
-            )
-
-    except requests.RequestException as error:
-        print(f"n8n request error: {error}")
-
+    except Exception as e:
+        print("Error:", e)
         bot.send_message(
             chat_id,
-            "Sorry, I couldn't reach my AI service. "
-            "Please try again later."
+            "Sorry, something went wrong. Please try again."
         )
 
-    except (ValueError, TypeError) as error:
-        print(f"n8n response error: {error}")
 
-        bot.send_message(
-            chat_id,
-            "I received an unexpected reply from the AI service."
-        )
 
 
 # =========================
@@ -402,28 +395,28 @@ def conversational(message):
             return
 
         # Fetch All Data
-        if user_text == "Fetch All Data":
-            data = [
-                (key, value)
-                for key, value in recall_all_fact(chat_id)
-                if key != "temp_key"
-            ]
+       
+        elif user_text == "Fetch All Data":
 
-            if not data:
-                show_menu(
+            memories = recall_all_fact(chat_id)
+
+            if not memories:
+                bot.send_message(chat_id, "No saved data found.")
+
+            else:
+                memory_text = ""
+
+                for key, value in memories:
+                    if key != "temp_key":
+                        memory_text += key + ": " + value + "\n"
+  
+                if memory_text == "":
+                    bot.send_message(chat_id, "No saved data found.")
+
+                else:
+                    show_menu(
                     chat_id,
-                    "You have no saved information yet."
-                )
-                return
-
-            lines = [
-                f"• {key.replace('_', ' ').title()}: {value}"
-                for key, value in data
-            ]
-
-            show_menu(
-                chat_id,
-                "Your Saved Information\n" + "\n".join(lines)
+            "Your Saved Information\n" + memory_text
             )
             return
 
@@ -482,7 +475,6 @@ def conversational(message):
         save_pending_keys(chat_id, keys)
 
         update_user_state(chat_id, "CHOOSE_VALUE")
-
         bot.send_message(
             chat_id,
             "Enter one value for each key in the same order:\n"
