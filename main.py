@@ -241,12 +241,7 @@ def send_to_n8n(chat_id, user_message):
 
         response.raise_for_status()
 
-        # Get the AI's reply
-        result = response.json()
-        reply = result["reply"]
-
-        # Send the reply to the user
-        bot.send_message(chat_id, reply)
+        # n8n sends the AI reply directly to Telegram
 
     except Exception as e:
         print("Error:", e)
@@ -254,6 +249,7 @@ def send_to_n8n(chat_id, user_message):
             chat_id,
             "Sorry, something went wrong. Please try again."
         )
+
 
 
 
